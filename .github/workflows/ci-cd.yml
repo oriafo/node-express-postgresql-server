@@ -1,0 +1,268 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+  # pull_request:
+  #   branches:
+  #     - main
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  KUBE_CONTEXT: kind-kind
+  KUBE_NAMESPACE: node-postgres-app
+  IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}
+
+jobs:
+
+  # CI - Test Application
+  # Runs on GitHub-hosted runner
+  test:
+    name: Test Application
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+
+  # CI - Build and Push Docker Image
+  # Runs on GitHub-hosted runner
+  build:
+    name: Build and Push Docker Image
+    needs: test
+
+    # Only build/push when code is actually
+    # pushed to main. Do not build/push for PRs.
+    if: github.event_name == 'push'
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+
+  # CD - Deploy to Local Kind Kubernetes
+  # Runs on your local self-hosted Windows runner
+  deploy:
+    name: Deploy to Local Kubernetes
+    needs: build
+
+    if: github.event_name == 'push'
+
+    runs-on:
+      - self-hosted
+      - Windows
+      - x64
+
+    steps:
+
+      # Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # Verify Docker
+      - name: Verify Docker
+        shell: powershell
+        run: |
+          Write-Host "=== Docker Version ==="
+          docker version
+
+
+      # Verify Kubernetes CLI
+      - name: Verify Kubernetes CLI
+        shell: powershell
+        run: |
+          Write-Host "=== kubectl Version ==="
+          kubectl version --client
+
+          Write-Host "=== Current Kubernetes Context ==="
+          kubectl config current-context
+
+
+      # Explicitly select kind cluster
+      - name: Select kind Kubernetes context
+        shell: powershell
+        run: |
+          kubectl config use-context $env:KUBE_CONTEXT
+
+          Write-Host "=== Selected Context ==="
+          kubectl config current-context
+
+
+      # Verify kind cluster
+      - name: Verify kind cluster
+        shell: powershell
+        run: |
+          Write-Host "=== Kind Clusters ==="
+          kind get clusters
+
+          Write-Host "=== Cluster Info ==="
+          kubectl cluster-info --context $env:KUBE_CONTEXT
+
+          Write-Host "=== Kubernetes Nodes ==="
+          kubectl get nodes --context $env:KUBE_CONTEXT -o wide
+
+
+      # Create namespace
+      - name: Apply namespace
+        shell: powershell
+        run: |
+          kubectl apply `
+            --context $env:KUBE_CONTEXT `
+            -f k8s/namespace.yaml
+
+
+      # Apply application configuration
+      - name: Apply ConfigMap
+        shell: powershell
+        run: |
+          kubectl apply `
+            --context $env:KUBE_CONTEXT `
+            -f k8s/configmap.yaml
+
+      # Create database secret from GitHub Actions secrets
+      - name: Create Kubernetes Secret
+        shell: powershell
+        env:
+          DB_USER: ${{ secrets.DATABASE_USER }}
+          DB_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
+          DB_NAME: mydatabase
+        run: |
+          kubectl create secret generic postgres-secret `
+            --context $env:KUBE_CONTEXT `
+            --namespace $env:KUBE_NAMESPACE `
+            --from-literal=POSTGRES_USER=$env:DB_USER `
+            --from-literal=POSTGRES_PASSWORD=$env:DB_PASSWORD `
+            --from-literal=POSTGRES_DB=$env:DB_NAME `
+            --from-literal=DATABASE_USER=$env:DB_USER `
+            --from-literal=DATABASE_PASSWORD=$env:DB_PASSWORD `
+            --dry-run=client -o yaml | kubectl apply --context $env:KUBE_CONTEXT -f -
+
+
+      # Deploy PostgreSQL
+      - name: Deploy PostgreSQL
+        shell: powershell
+        run: |
+          kubectl apply `
+            --context $env:KUBE_CONTEXT `
+            -f k8s/postgres-deployment.yaml
+
+          kubectl apply `
+            --context $env:KUBE_CONTEXT `
+            -f k8s/postgres-service.yaml
+
+
+      # Wait for PostgreSQL
+      - name: Wait for PostgreSQL
+        shell: powershell
+        run: |
+          kubectl rollout status `
+            --context $env:KUBE_CONTEXT `
+            deployment/postgres `
+            -n $env:KUBE_NAMESPACE `
+            --timeout=120s
+
+
+      # Deploy application manifests
+      - name: Deploy application
+        shell: powershell
+        run: |
+          kubectl apply `
+            --context $env:KUBE_CONTEXT `
+            -f k8s/app-deployment.yaml
+
+          kubectl apply `
+            --context $env:KUBE_CONTEXT `
+            -f k8s/app-service.yaml
+
+
+      # Update application image
+      - name: Update application image
+        shell: powershell
+        run: |
+          kubectl set image `
+            --context $env:KUBE_CONTEXT `
+            deployment/node-api `
+            node-api=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} `
+            -n $env:KUBE_NAMESPACE
+
+
+      # Wait for application rollout
+      - name: Wait for application rollout
+        shell: powershell
+        run: |
+          kubectl rollout status `
+            --context $env:KUBE_CONTEXT `
+            deployment/node-api `
+            -n $env:KUBE_NAMESPACE `
+            --timeout=180s
+
+
+      # Verify deployment
+      - name: Verify deployment
+        shell: powershell
+        run: |
+          Write-Host "=== Pods ==="
+          kubectl get pods `
+            --context $env:KUBE_CONTEXT `
+            -n $env:KUBE_NAMESPACE `
+            -o wide
+
+          Write-Host "=== Services ==="
+          kubectl get services `
+            --context $env:KUBE_CONTEXT `
+            -n $env:KUBE_NAMESPACE
+
+          Write-Host "=== Deployments ==="
+          kubectl get deployments `
+            --context $env:KUBE_CONTEXT `
+            -n $env:KUBE_NAMESPACE
+
+          Write-Host "=== Deployment Status ==="
+          kubectl rollout status `
+            --context $env:KUBE_CONTEXT `
+            deployment/node-api `
+            -n $env:KUBE_NAMESPACE `
+            --timeout=30s
+
