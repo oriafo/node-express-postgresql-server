@@ -165,18 +165,18 @@ jobs:
       - name: Create Kubernetes Secret
         shell: powershell
         env:
-          DB_USER: ${{ secrets.DATABASE_USER }}
-          DB_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
-          DB_NAME: mydatabase
+          DATABASE_USER: ${{ secrets.DATABASE_USER }}
+          DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
+          DATABASE_NAME: mydatabase
         run: |
           kubectl create secret generic postgres-secret `
             --context $env:KUBE_CONTEXT `
             --namespace $env:KUBE_NAMESPACE `
-            --from-literal=POSTGRES_USER=$env:DB_USER `
-            --from-literal=POSTGRES_PASSWORD=$env:DB_PASSWORD `
-            --from-literal=POSTGRES_DB=$env:DB_NAME `
-            --from-literal=DATABASE_USER=$env:DB_USER `
-            --from-literal=DATABASE_PASSWORD=$env:DB_PASSWORD `
+            --from-literal=POSTGRES_USER=$env:DATABASE_USER `
+            --from-literal=POSTGRES_PASSWORD=$env:DATABASE_PASSWORD `
+            --from-literal=POSTGRES_DB=$env:DATABASE_NAME `
+            --from-literal=DATABASE_USER=$env:DATABASE_USER `
+            --from-literal=DATABASE_PASSWORD=$env:DATABASE_PASSWORD `
             --dry-run=client -o yaml | kubectl apply --context $env:KUBE_CONTEXT -f -
 
 
