@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-api
+  namespace: node-postgres-app
+
+spec:
+  selector:
+    app: node-api
+
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+
+  type: NodePort
