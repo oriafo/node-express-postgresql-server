@@ -78,7 +78,6 @@ jobs:
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
 
   # CD - Deploy to Local Kind Kubernetes
@@ -202,7 +201,7 @@ jobs:
             --context $env:KUBE_CONTEXT `
             deployment/postgres `
             -n $env:KUBE_NAMESPACE `
-            --timeout=120s
+            --timeout=600s
 
 
       # Deploy application manifests
