@@ -93,6 +93,7 @@ jobs:
       - self-hosted
       - Windows
       - x64
+    environment: master
 
     steps:
 
