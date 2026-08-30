@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-api
+  namespace: node-postgres-app
+
+spec:
+  replicas: 2
+
+  strategy:
+    type: RollingUpdate
+
+  selector:
+    matchLabels:
+      app: node-api
+
+  template:
+    metadata:
+      labels:
+        app: node-api
+
+    spec:
+      containers:
+        - name: node-api
+
+          image: ghcr.io/oriafo/node-express-postgresql-server:latest
+
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 3000
+
+          env:
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: PORT
+
+            - name: DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DATABASE
+
+            - name: DATABASE_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DATABASE_HOST
+
+            - name: DATABASE_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DATABASE_PORT
+
+            - name: DATABASE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: DATABASE_USER
+
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: DATABASE_PASSWORD
+
+          readinessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 6
+
+          livenessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
